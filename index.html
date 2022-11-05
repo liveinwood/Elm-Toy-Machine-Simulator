@@ -21,25 +21,31 @@
 
 <body>
 	<h1>Elm Toy Machine Simulator</h1>
-	<p>
-		赤色背景の列が現在のプログラムカウンタの位置を示しています。<br>
-		「exec」ボタンをクリックすとプログラムカウンタが1つ進みます。<br>
-		initMemoryに命令列をリストで定義すればプログラムを書き換えられます。<br>
-		下記は3回入力を受け取ってその合計値を出力するプログラムです。
-	</p>
-	<main></main>
-	<script>
-		const app = Elm.Main.init({ node: document.querySelector('main') })
-		app.ports.sendMessage.subscribe((message) => {
-			let n = prompt(message);
+	<h2>説明</h2>
+	<em>
+		srcにコードを入力してcompileするとmemory内に命令列とデータが展開されます。<br>
+		構文エラーがある場合はエラーメッセージがoutputエリア出力されます。（横着しているので不親切なメッセージです...）<br>
+		stepをクリックするとプログラムカウンタが1つ進みます。赤色背景行が現在のプログラムカウンタの位置です。<br>
+		<br>
+		入力済みのコードは「3回入力を受け取ってその合計値を出力するプログラム」です。<br>
+		<br>
+		使える命令と構文については<a target="_blank"
+			href="https://kernighan.com/toysim.html">https://kernighan.com/toysim.html</a>を参照してください。<br>
+		<em>※本実装では行末にセミコロン（;）を追加しています。</em>
+		</p>
+		<main></main>
+		<script>
+			const app = Elm.Main.init({ node: document.querySelector('main') })
+			app.ports.sendMessage.subscribe((message) => {
+				let n = prompt(message);
 
-			if (n === null) {
-				n = "";
-			}
+				if (n === null) {
+					n = "";
+				}
 
-			app.ports.messageReceiver.send(n);
-		});
-	</script>
+				app.ports.messageReceiver.send(n);
+			});
+		</script>
 </body>
 
 </html>

@@ -2,13 +2,17 @@ port module Main exposing (..)
 
 import Array exposing (..)
 import Browser exposing (..)
+import Char exposing (isAlpha, isAlphaNum)
 import Cmd.Extra exposing (..)
 import Debug exposing (toString)
 import Dict exposing (Dict)
 import Html exposing (Html)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
+import List exposing (reverse)
+import Parser exposing (..)
 import Result exposing (Result)
+import Set exposing (..)
 import String exposing (toInt)
 import Tuple exposing (first)
 
@@ -52,9 +56,39 @@ type Operand
 type alias Model =
     { pc : Int
     , accumulator : Int
+    , src : String
     , memory : Memory
     , output : List String
     , stopped : Bool
+    }
+
+
+initialSrc =
+    """Load CNT;
+LOOP Ifzero BREAK;
+Get;
+Add SUM;
+Store SUM;
+Load CNT;
+Sub 1;
+Store CNT;
+Goto LOOP;
+BREAK Load SUM;
+Print;
+Stop;
+CNT 3;
+SUM 0;
+"""
+
+
+initialModel : Model
+initialModel =
+    { pc = 0
+    , accumulator = 0
+    , src = initialSrc
+    , memory = Array.empty
+    , output = []
+    , stopped = False
     }
 
 
@@ -74,39 +108,7 @@ main =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { pc = 0
-      , accumulator = 0
-      , memory = initMemory
-      , output = []
-      , stopped = False
-      }
-    , Cmd.none
-    )
-
-
-
--- メモリの初期化
--- 3回入力を受け取ってその合計値を出力するプログラム
-
-
-initMemory : Memory
-initMemory =
-    [ ( "", Code Load (Label "CNT") )
-    , ( "LOOP", Code Ifzero (Label "BREAK") )
-    , ( "", Code Get NoArg )
-    , ( "", Code Add (Label "SUM") )
-    , ( "", Code Store (Label "SUM") )
-    , ( "", Code Load (Label "CNT") )
-    , ( "", Code Sub (Immed 1) )
-    , ( "", Code Store (Label "CNT") )
-    , ( "", Code Goto (Label "LOOP") )
-    , ( "BREAK", Code Load (Label "SUM") )
-    , ( "", Code Print NoArg )
-    , ( "", Code Stop NoArg )
-    , ( "CNT", Data 3 )
-    , ( "SUM", Data 0 )
-    ]
-        |> Array.fromList
+    ( initialModel, Cmd.none )
 
 
 
@@ -126,12 +128,25 @@ port messageReceiver : (String -> msg) -> Sub msg
 type Msg
     = Inst ( Label, Entry )
     | Recv String
+    | InputSrc String
+    | Compile
     | Step
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        Compile ->
+            case compile model.src of
+                Ok memory ->
+                    ( { model | memory = memory, output = [] }, Cmd.none )
+
+                Err errorMsg ->
+                    ( initialModel |> setOutput errorMsg |> setSrc model.src, Cmd.none )
+
+        InputSrc src ->
+            ( { model | src = src }, Cmd.none )
+
         Inst ( _, Code opecode operand ) ->
             case exec opecode operand model of
                 Ok ( m, cmd ) ->
@@ -313,10 +328,21 @@ view : Model -> Html Msg
 view m =
     Html.div
         []
-        [ viewMemory m
+        [ viewSrc m
+        , Html.button [ onClick Compile ] [ Html.text "compile" ]
+        , viewMemory m
+        , Html.button [ onClick Step ] [ Html.text "step" ]
         , viewAccum m
         , viewOutput m
-        , Html.button [ onClick Step ] [ Html.text "exec" ]
+        ]
+
+
+viewSrc : Model -> Html Msg
+viewSrc model =
+    Html.div
+        []
+        [ Html.p [] [ Html.text "src code" ]
+        , Html.textarea [ cols 20, rows 20, value model.src, onInput InputSrc ] []
         ]
 
 
@@ -472,6 +498,11 @@ getAccum m =
     m.accumulator
 
 
+setSrc : String -> Model -> Model
+setSrc s m =
+    { m | src = s }
+
+
 
 -- 指定のラベル位置にあるメモリエントリを返す
 
@@ -530,7 +561,7 @@ searchIndex lab m =
 
 searchEntry : Label -> Model -> List ( Label, Entry )
 searchEntry lab m =
-    filter (\e -> first e == lab) m.memory |> toList
+    Array.filter (\e -> first e == lab) m.memory |> Array.toList
 
 
 
@@ -550,3 +581,185 @@ incPc m =
 setPc : Int -> Model -> Model
 setPc n m =
     { m | pc = n }
+
+
+
+--------------------------------------- Parser -------------------------------
+
+
+whitespace : Parser ()
+whitespace =
+    chompWhile (\c -> c == ' ' || c == '\t')
+
+
+labelP : Parser Label
+labelP =
+    variable
+        { start = isAlpha
+        , inner = isAlphaNum
+        , reserved = Set.fromList [ "Stop", "Get", "Print", "Load", "Store", "Add", "Sub", "Goto", "Ifzero", "Ifpos" ]
+        }
+
+
+
+-- 引数を取らない命令のparser
+-- stop get print
+
+
+noOperandCodeP : String -> Opecode -> Parser Entry
+noOperandCodeP opname opecode =
+    succeed identity
+        |. whitespace
+        |. keyword opname
+        |= succeed (Code opecode NoArg)
+        |. whitespace
+        |. symbol ";"
+        |. spaces
+
+
+stopP : Parser Entry
+stopP =
+    noOperandCodeP "Stop" Stop
+
+
+getP : Parser Entry
+getP =
+    noOperandCodeP "Get" Get
+
+
+printP : Parser Entry
+printP =
+    noOperandCodeP "Print" Print
+
+
+
+-- ラベルを引数にとる命令のparser
+-- load store goto ifzero ifpos
+
+
+labelOperandCodeP : String -> Opecode -> Parser Entry
+labelOperandCodeP opname opecode =
+    succeed (\lab -> Code opecode (Label lab))
+        |. whitespace
+        |. keyword opname
+        |. whitespace
+        |= labelP
+        |. whitespace
+        |. symbol ";"
+        |. spaces
+
+
+loadP : Parser Entry
+loadP =
+    labelOperandCodeP "Load" Load
+
+
+storeP : Parser Entry
+storeP =
+    labelOperandCodeP "Store" Store
+
+
+gotoP : Parser Entry
+gotoP =
+    labelOperandCodeP "Goto" Goto
+
+
+ifzeroP : Parser Entry
+ifzeroP =
+    labelOperandCodeP "Ifzero" Ifzero
+
+
+ifposP : Parser Entry
+ifposP =
+    labelOperandCodeP "Ifpos" Ifpos
+
+
+operandCodeP : String -> Opecode -> Parser Entry
+operandCodeP opname opecode =
+    succeed (\arg -> Code opecode arg)
+        |. whitespace
+        |. keyword opname
+        |. whitespace
+        |= oneOf
+            [ succeed Immed |= int
+            , succeed Label |= labelP
+            ]
+        |. whitespace
+        |. symbol ";"
+        |. spaces
+
+
+addP : Parser Entry
+addP =
+    operandCodeP "Add" Add
+
+
+subP : Parser Entry
+subP =
+    operandCodeP "Sub" Sub
+
+
+dataP : Parser Entry
+dataP =
+    succeed Data
+        |. whitespace
+        |= int
+        |. whitespace
+        |. symbol ";"
+        |. spaces
+
+
+codeP : Parser Entry
+codeP =
+    oneOf
+        (List.map backtrackable
+            [ stopP
+            , getP
+            , printP
+            , loadP
+            , storeP
+            , addP
+            , subP
+            , gotoP
+            , ifzeroP
+            , ifposP
+            ]
+        )
+
+
+codeStatementP : Parser ( Label, Entry )
+codeStatementP =
+    oneOf
+        [ backtrackable (succeed (\label -> \code -> ( label, code )) |. spaces |= labelP |= codeP)
+        , backtrackable (succeed (\code -> ( "", code )) |. spaces |= codeP)
+        , backtrackable (succeed (\label -> \data -> ( label, data )) |. spaces |= labelP |= dataP)
+        ]
+
+
+compiler : Parser (List ( Label, Entry ))
+compiler =
+    Parser.loop
+        []
+        (\stmts ->
+            oneOf
+                [ succeed (\stmt -> Loop (stmt :: stmts))
+                    |= codeStatementP
+                , succeed ()
+                    |> Parser.map (\_ -> Done (reverse stmts))
+                ]
+        )
+        |. end
+
+
+compile : String -> Result String Memory
+compile src =
+    case run compiler src of
+        Ok list ->
+            Ok (Array.fromList list)
+
+        Err deadEnd ->
+            Err (Debug.toString deadEnd)
+
+
+
+-- Err (deadEndsToString deadEnd)
