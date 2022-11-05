@@ -1,0 +1,45 @@
+<html>
+
+<head>
+	<style>
+		table,
+		td,
+		th {
+			border: 1px #2b2b2b solid;
+		}
+
+		td {
+			width: 50px;
+			text-align: center
+		}
+
+		.currentpc {
+			background-color: red
+		}
+	</style>
+</head>
+
+<body>
+	<h1>Elm Toy Machine Simulator</h1>
+	<p>
+		赤色背景の列が現在のプログラムカウンタの位置を示しています。<br>
+		「exec」ボタンをクリックすとプログラムカウンタが1つ進みます。<br>
+		initMemoryに命令列をリストで定義すればプログラムを書き換えられます。<br>
+		下記は3回入力を受け取ってその合計値を出力するプログラムです。
+	</p>
+	<main></main>
+	<script>
+		const app = Elm.Main.init({ node: document.querySelector('main') })
+		app.ports.sendMessage.subscribe((message) => {
+			let n = prompt(message);
+
+			if (n === null) {
+				n = "";
+			}
+
+			app.ports.messageReceiver.send(n);
+		});
+	</script>
+</body>
+
+</html>
